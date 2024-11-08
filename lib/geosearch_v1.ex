@@ -2,61 +2,65 @@ defmodule GeosearchV1 do
   use GenServer
 
   @impl true
-  @spec init([GeoMap.geo_item(item)] | GeoMap.t(item)) :: {:ok, GeoMap.t(item)} | {:continue, [GeoMap.geo_item(item)]} when item: var
-  def init(list) when is_list(list), do: {:continue, list}
-  def init(%GeoMap{} = initial), do: {:ok, initial}
+  @spec init(Path.t() | Geo.t(data)) :: {:ok, Geo.t(data)} | {:ok, nil, {:continue, Path.t()}} when data: var
+   def init(%Geo{} = initial), do: {:ok, initial}
+   def init(path), do: {:ok, nil, {:continue, path}}
 
   @impl true
-  @spec handle_continue([GeoMap.geo_item(item)], any()) :: {:noreply, GeoMap.t(item)} when item: var
-  def handle_continue(list, _) do
-    {:noreply, GeoMap.from_list(list)}
+  @spec handle_continue(Path.t(), any()) :: {:noreply, Geo.t(term())}
+  def handle_continue(path, _) do
+    {:noreply, Geo.load(path)}
   end
 
   @impl true
-  @spec handle_call({:nearest, GeoMap.point()}, any(), GeoMap.t(item)) :: {:reply, {GeoMap.distance(), GeoMap.geo_item(item)} | :none , GeoMap.t(item)} when item: var
+  @spec handle_call({:nearest, Geo.point()}, any(), Geo.t(data)) :: {:reply, {Geo.distance(), Geo.item(data)} | :none , Geo.t(data)} when data: var
   def handle_call({:nearest, coord}, _from, state), do:
-    {:reply, GeoMap.nearest(state, coord), state}
+    {:reply, Geo.nearest(state, coord), state}
 
   @impl true
-  @spec handle_call({:within_radius, GeoMap.point(), GeoMap.distance()}, any(), GeoMap.t(item)) :: {:reply, [{GeoMap.distance(), GeoMap.geo_item(item)}], GeoMap.t(item)} when item: var
+  @spec handle_call({:within_radius, Geo.point(), Geo.distance()}, any(), Geo.t(data)) :: {:reply, [{Geo.distance(), Geo.item(data)}], Geo.t(data)} when data: var
   def handle_call({:within_radius, coord, radius}, _from, state), do:
-    {:reply, GeoMap.within_radius(state, coord, radius), state}
+    {:reply, Geo.within_radius(state, coord, radius), state}
 
   @impl true
-  @spec handle_call({:within_box, GeoMap.point(), GeoMap.point()}, any(), GeoMap.t(item)) :: {:reply, [GeoMap.geo_item(item)], GeoMap.t(item)} when item: var
+  @spec handle_call({:within_box, Geo.point(), Geo.point()}, any(), Geo.t(data)) :: {:reply, [Geo.item(data)], Geo.t(data)} when data: var
   def handle_call({:within_box, min, max}, _from, state), do:
-    {:reply, GeoMap.within_box(state, min, max), state}
+    {:reply, Geo.within_box(state, min, max), state}
 
   @impl true
-  @spec handle_cast({:add, GeoMap.geo_item(item)}, GeoMap.t(item)) :: {:noreply, GeoMap.t(item)} when item: var
+  @spec handle_cast({:add, Geo.item(data)}, Geo.t(data)) :: {:noreply, Geo.t(data)} when data: var
   def handle_cast({:add, item}, state) do
-    {:noreply, GeoMap.add(state, item)}
+    {:noreply, Geo.add(state, item)}
   end
 
+  @snapshot_interval 60*60*1_000
   @impl true
-  @spec handle_info({:snapshot, binary()}, GeoMap.t(item)) :: {:noreply, GeoMap.t(item)} when item: var
-  def handle_info({:snapshot, filename}, state) do
-    File.write!(filename, :erlang.term_to_binary(state))
+  @spec handle_info({:snapshot, Path.t()}, Geo.t(data)) :: {:noreply, Geo.t(data)} when data: var
+  def handle_info({:snapshot, path} = message, state) do
+    Geo.save(Path.join(path, datestamp()), state)
+    Process.send_after(self(), message, @snapshot_interval)
     {:noreply, state}
   end
 
-  @spec nearest(pid(), GeoMap.point()) :: {GeoMap.distance(), GeoMap.geo_item(term())} | :none
+  @spec nearest(pid(), Geo.point()) :: {Geo.distance(), Geo.item(term())} | :none
   def nearest(pid, point) do
     GenServer.call(pid, {:nearest, point})
   end
 
-  @spec within_radius(pid(), GeoMap.point(), GeoMap.distance()) :: [{GeoMap.distance(), GeoMap.geo_item(term())}]
+  @spec within_radius(pid(), Geo.point(), Geo.distance()) :: [{Geo.distance(), Geo.item(term())}]
   def within_radius(pid, point, radius) do
     GenServer.call(pid, {:within_radius, point, radius})
   end
 
-  @spec within_box(pid(), GeoMap.point(), GeoMap.point()) :: [GeoMap.geo_item(term())]
+  @spec within_box(pid(), Geo.point(), Geo.point()) :: [Geo.item(term())]
   def within_box(pid, min, max) do
     GenServer.call(pid, {:within_box, min, max})
   end
 
-  @spec add(pid(), GeoMap.geo_item(term)) :: :ok
+  @spec add(pid(), Geo.item(term)) :: :ok
   def add(pid, item) do
     GenServer.cast(pid, {:add, item})
   end
+
+  defp datestamp(), do: DateTime.utc_now() |> DateTime.to_iso8601()
 end
